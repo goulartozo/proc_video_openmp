@@ -4,11 +4,12 @@
 using namespace cv;
 
 VideoCapture carregarVideo(const char* nomeArquivo);
-void processarVideo(VideoCapture& capture, int filtro);
+void processarVideo(VideoCapture& capture, int filtro, int intensidade);
 
 int main(int argc, char** argv)
 {
     int opcao;
+    int intensidadeDoEfeito = 5;
 
     if (argc < 2)
     {
@@ -20,8 +21,8 @@ int main(int argc, char** argv)
     {
         printf("\n===== FILTROS =====\n");
         printf("1 - Escala de Cinza\n");
-        printf("2 - Emboss\n");
-        printf("3 - Sharpen\n");
+        printf("2 - Sharpen\n");
+        printf("3 - Emboss\n");
         printf("4 - Sobel\n");
         printf("0 - Sair\n");
         printf("Opcao: ");
@@ -31,6 +32,12 @@ int main(int argc, char** argv)
         if (opcao == 0)
             break;
 
+        if (opcao == 2)
+        {
+            printf("Qual intensidade? ");
+            scanf("%d", &intensidadeDoEfeito);
+        }
+
         VideoCapture capture = carregarVideo(argv[1]);
 
         if (!capture.isOpened())
@@ -39,7 +46,7 @@ int main(int argc, char** argv)
             continue;
         }
 
-        processarVideo(capture, opcao);
+        processarVideo(capture, opcao, intensidadeDoEfeito);
 
         capture.release();
     }
@@ -56,46 +63,50 @@ VideoCapture carregarVideo(const char* nomeArquivo)
     return capture;
 }
 
-void aplicarSharpen(Mat& frame)
+void aplicarSharpen(Mat& frame, int intensidade)
 {
-    Mat gray;
-    cvtColor(frame, gray, cv::COLOR_BGR2GRAY);
 
-    Mat resultado = gray.clone();
+    float k = (float)intensidade;
+    float kernel[3][3] = {
+        {  0, -1,  0 },
+        { -1,  k, -1 },
+        {  0, -1,  0 }
+    };
 
-    for (int y = 1; y < gray.rows - 1; y++)
+    Mat resultado(frame.size(), frame.type());
+
+    for (int y = 1; y < frame.rows - 1; y++)
     {
-        for (int x = 1; x < gray.cols - 1; x++)
+        const uchar* cima   = frame.ptr<uchar>(y - 1);
+        const uchar* meio   = frame.ptr<uchar>(y);
+        const uchar* baixo  = frame.ptr<uchar>(y + 1);
+        uchar*       dst    = resultado.ptr<uchar>(y);
+
+        for (int x = 1; x < frame.cols - 1; x++)
         {
-            int centro   = gray.at<uchar>(y, x);
-            int cima     = gray.at<uchar>(y - 1, x);
-            int baixo    = gray.at<uchar>(y + 1, x);
-            int esquerda = gray.at<uchar>(y, x - 1);
-            int direita  = gray.at<uchar>(y, x + 1);
+            for (int c = 0; c < 3; c++)
+            {
+                int idx = x * 3 + c;
 
-            int valor =
-                centro * 5
-                - cima
-                - baixo
-                - esquerda
-                - direita;
+                float valor =
+                    meio[idx]          * kernel[1][1]
+                  + cima[idx]          * kernel[0][1]
+                  + baixo[idx]         * kernel[2][1]
+                  + meio[idx - 3]      * kernel[1][0]
+                  + meio[idx + 3]      * kernel[1][2];
 
-            if (valor < 0)
-                valor = 0;
-
-            if (valor > 255)
-                valor = 255;
-
-            resultado.at<uchar>(y, x) = valor;
+                dst[idx] = (uchar)std::clamp((int)valor, 0, 255);
+            }
         }
     }
 
-    cvtColor(resultado, frame, cv::COLOR_GRAY2BGR);
+    resultado.copyTo(frame);
 }
 
-void processarVideo(VideoCapture& capture, int filtro)
+void processarVideo(VideoCapture& capture, int filtro, int intensidadeDoEfeito)
 {
     Mat frame;
+    int intensidade = intensidadeDoEfeito;
 
     while (capture.read(frame))
     {
@@ -106,8 +117,8 @@ void processarVideo(VideoCapture& capture, int filtro)
                 cvtColor(frame, frame, COLOR_GRAY2BGR);
                 break;
 
-            case 2:
-                aplicarSharpen(frame);
+            case 2:       
+                aplicarSharpen(frame, intensidade);
                 break;
 
             case 3:
