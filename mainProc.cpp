@@ -1,10 +1,13 @@
 #include <stdio.h>
 #include <opencv2/opencv.hpp>
+#include <omp.h>
 
 using namespace cv;
 
 VideoCapture carregarVideo(const char* nomeArquivo);
 void processarVideo(VideoCapture& capture, int filtro, int intensidade);
+void aplicarConvolucao(Mat& frame, const float kernel[3][3]);
+void aplicarSharpen(Mat& frame, int intensidade);
 
 int main(int argc, char** argv)
 {
@@ -57,30 +60,23 @@ int main(int argc, char** argv)
 VideoCapture carregarVideo(const char* nomeArquivo)
 {
     VideoCapture capture;
-
     capture.open(nomeArquivo);
 
     return capture;
 }
 
-void aplicarSharpen(Mat& frame, int intensidade)
+void aplicarConvolucao(Mat& frame, const float kernel[3][3])
 {
+    Mat resultado = frame.clone();
 
-    float k = (float)intensidade;
-    float kernel[3][3] = {
-        {  0, -1,  0 },
-        { -1,  k, -1 },
-        {  0, -1,  0 }
-    };
-
-    Mat resultado(frame.size(), frame.type());
-
+    #pragma omp parallel for
     for (int y = 1; y < frame.rows - 1; y++)
     {
-        const uchar* cima   = frame.ptr<uchar>(y - 1);
-        const uchar* meio   = frame.ptr<uchar>(y);
-        const uchar* baixo  = frame.ptr<uchar>(y + 1);
-        uchar*       dst    = resultado.ptr<uchar>(y);
+        const uchar* linhaCima  = frame.ptr<uchar>(y - 1);
+        const uchar* linhaMeio  = frame.ptr<uchar>(y);
+        const uchar* linhaBaixo = frame.ptr<uchar>(y + 1);
+
+        uchar* dst = resultado.ptr<uchar>(y);
 
         for (int x = 1; x < frame.cols - 1; x++)
         {
@@ -88,12 +84,19 @@ void aplicarSharpen(Mat& frame, int intensidade)
             {
                 int idx = x * 3 + c;
 
-                float valor =
-                    meio[idx]          * kernel[1][1]
-                  + cima[idx]          * kernel[0][1]
-                  + baixo[idx]         * kernel[2][1]
-                  + meio[idx - 3]      * kernel[1][0]
-                  + meio[idx + 3]      * kernel[1][2];
+                float valor = 0;
+
+                valor += linhaCima[idx - 3]  * kernel[0][0];
+                valor += linhaCima[idx]      * kernel[0][1];
+                valor += linhaCima[idx + 3]  * kernel[0][2];
+
+                valor += linhaMeio[idx - 3]  * kernel[1][0];
+                valor += linhaMeio[idx]      * kernel[1][1];
+                valor += linhaMeio[idx + 3]  * kernel[1][2];
+
+                valor += linhaBaixo[idx - 3] * kernel[2][0];
+                valor += linhaBaixo[idx]     * kernel[2][1];
+                valor += linhaBaixo[idx + 3] * kernel[2][2];
 
                 dst[idx] = (uchar)std::clamp((int)valor, 0, 255);
             }
@@ -103,10 +106,21 @@ void aplicarSharpen(Mat& frame, int intensidade)
     resultado.copyTo(frame);
 }
 
+void aplicarSharpen(Mat& frame, int intensidade)
+{
+    float kernel[3][3] =
+    {
+        {  0, -1,  0 },
+        { -1, (float)intensidade, -1 },
+        {  0, -1,  0 }
+    };
+
+    aplicarConvolucao(frame, kernel);
+}
+
 void processarVideo(VideoCapture& capture, int filtro, int intensidadeDoEfeito)
 {
     Mat frame;
-    int intensidade = intensidadeDoEfeito;
 
     while (capture.read(frame))
     {
@@ -117,12 +131,12 @@ void processarVideo(VideoCapture& capture, int filtro, int intensidadeDoEfeito)
                 cvtColor(frame, frame, COLOR_GRAY2BGR);
                 break;
 
-            case 2:       
-                aplicarSharpen(frame, intensidade);
+            case 2:
+                aplicarSharpen(frame, intensidadeDoEfeito);
                 break;
 
             case 3:
-                printf("Sharpen ainda nao implementado\n");
+                printf("Emboss ainda nao implementado\n");
                 break;
 
             case 4:
@@ -138,4 +152,3 @@ void processarVideo(VideoCapture& capture, int filtro, int intensidadeDoEfeito)
 
     destroyAllWindows();
 }
-
