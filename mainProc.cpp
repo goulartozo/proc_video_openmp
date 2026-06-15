@@ -8,6 +8,7 @@ VideoCapture carregarVideo(const char* nomeArquivo);
 void processarVideo(VideoCapture& capture, int filtro, int intensidade);
 void aplicarConvolucao(Mat& frame, const float kernel[3][3]);
 void aplicarSharpen(Mat& frame, int intensidade);
+void aplicarEscalaDeCinza(Mat& frame);
 
 int main(int argc, char** argv)
 {
@@ -16,7 +17,7 @@ int main(int argc, char** argv)
 
     if (argc < 2)
     {
-        printf("Uso: %s <video>\n", argv[0]);
+        printf("Uso: %s <video> Ex: ./mainProc video2.avi\n", argv[0]);
         return 1;
     }
 
@@ -45,7 +46,8 @@ int main(int argc, char** argv)
 
         if (!capture.isOpened())
         {
-            printf("Erro ao abrir video\n");
+            printf("\n\nErro ao abrir video: %s\n", argv[1]);
+            printf("Verifique se o arquivo existe e se o caminho está correto.\n");
             continue;
         }
 
@@ -118,6 +120,31 @@ void aplicarSharpen(Mat& frame, int intensidade)
     aplicarConvolucao(frame, kernel);
 }
 
+void aplicarEscalaDeCinza(Mat& frame)
+{
+    #pragma omp parallel for // utilizado apenas for (sem guidance) porque a carga é uniforme entre iterações
+    for (int y = 0; y < frame.rows; y++)
+    {
+        const uchar* src = frame.ptr<uchar>(y);
+        uchar* dst = frame.ptr<uchar>(y);
+
+        for (int x = 0; x < frame.cols; x++)
+        {
+            int idx = x * 3; 
+
+            uchar b = src[idx]; // canal azul
+            uchar g = src[idx + 1]; // canal verde
+            uchar r = src[idx + 2]; // canal vermelho
+
+            uchar cinza = (uchar)((114 * b + 587 * g + 299 * r) / 1000); // fórmula de conversão para escala de cinza
+
+            dst[idx]     = cinza; 
+            dst[idx + 1] = cinza;
+            dst[idx + 2] = cinza;
+        }
+    }
+}
+
 void processarVideo(VideoCapture& capture, int filtro, int intensidadeDoEfeito)
 {
     Mat frame;
@@ -127,8 +154,7 @@ void processarVideo(VideoCapture& capture, int filtro, int intensidadeDoEfeito)
         switch (filtro)
         {
             case 1:
-                cvtColor(frame, frame, COLOR_BGR2GRAY);
-                cvtColor(frame, frame, COLOR_GRAY2BGR);
+                aplicarEscalaDeCinza(frame);
                 break;
 
             case 2:
