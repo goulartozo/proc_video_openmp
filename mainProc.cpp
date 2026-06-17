@@ -36,9 +36,15 @@ int main(int argc, char** argv)
         if (opcao == 0)
             break;
 
-        if (opcao == 2)
+        if(opcao > 4)
+		{
+			printf("\nOpção inválida! Tente novamente.\n");
+			continue;
+		}
+
+        if (opcao != 1)
         {
-            printf("Qual intensidade? ");
+            printf("\nQual intensidade? ");
             scanf("%d", &intensidadeDoEfeito);
         }
 
@@ -120,6 +126,39 @@ void aplicarSharpen(Mat& frame, int intensidade)
     aplicarConvolucao(frame, kernel);
 }
 
+void aplicarEmboss(Mat& frame, int i)
+{
+	float kernel[3][3] =
+	{
+		{-2 * (float)i, -1 * (float)i, 0},
+		{-1 * (float)i, 1, 1 * (float)i},
+		{0, 1 * (float)i, 2 * (float)i}	
+	};
+	
+	aplicarConvolucao(frame, kernel);
+}
+
+void aplicarSobel(Mat& frame, int i)
+{
+	float primeiro_kernel[3][3] =
+	{
+		{-1 * (float)i, 0, 1 * (float)i},
+		{-2 * (float)i, 0, 2 * (float)i},
+		{-1 * (float)i, 0, 1 * (float)i}
+	};
+	
+	aplicarConvolucao(frame, primeiro_kernel);
+	
+	float segundo_kernel[3][3] =
+	{
+		{1 * (float)i, 2 * (float)i, 1 * (float)i},
+		{0, 0, 0},
+		{-1 * (float)i, -2 * (float)i, -1 * (float)i}
+	};
+	
+	aplicarConvolucao(frame, segundo_kernel);
+}
+
 void aplicarEscalaDeCinza(Mat& frame)
 {
     #pragma omp parallel for // utilizado apenas for (sem guidance) porque a carga é uniforme entre iterações
@@ -162,12 +201,16 @@ void processarVideo(VideoCapture& capture, int filtro, int intensidadeDoEfeito)
                 break;
 
             case 3:
-                printf("Emboss ainda nao implementado\n");
+                aplicarEmboss(frame, intensidadeDoEfeito);
                 break;
 
             case 4:
-                printf("Sobel ainda nao implementado\n");
+                aplicarSobel(frame, intensidadeDoEfeito);
                 break;
+
+            default:
+				printf("\nOpção inválida! Tente novamente.\n");
+				break;
         }
 
         imshow("Video", frame);
