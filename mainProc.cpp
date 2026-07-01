@@ -150,7 +150,6 @@ void master(const char* nomeArquivo, int filtro, int intensidade, int size)
 
         int linhaInicial = 0;
 
-        // Envia blocos para os workers
         for (int destino = 1; destino < size; destino++)
         {
             int linhas = linhasBase;
@@ -186,7 +185,6 @@ void master(const char* nomeArquivo, int filtro, int intensidade, int size)
             linhaInicial += linhas;
         }
 
-        // Recebe os blocos processados
         linhaInicial = 0;
 
         for (int origem = 1; origem < size; origem++)
@@ -231,7 +229,6 @@ void worker(int rank, int filtro, int intensidade)
         int altura  = info[1];
         int canais  = info[2];
 
-        // Sinal de término enviado pelo master ({0,0,0})
         if (largura == 0 && altura == 0 && canais == 0)
         {
             printf("Worker %d recebeu sinal de término.\n", rank);
@@ -245,7 +242,6 @@ void worker(int rank, int filtro, int intensidade)
         int linhas        = dados[1];
         int linhasEnviar  = dados[2];
 
-        // Bloco recebido já inclui as linhas de halo (se existirem)
         Mat bloco(linhasEnviar, largura, CV_8UC3);
 
         MPI_Recv(bloco.ptr(0), linhasEnviar * largura * canais, MPI_UNSIGNED_CHAR, 0, 1, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
@@ -261,10 +257,8 @@ void worker(int rank, int filtro, int intensidade)
                 break;
         }
 
-        // Se primeiraLinha > 0, o bloco tem 1 linha de halo no topo
         int offsetTopo = (primeiraLinha == 0) ? 0 : 1;
 
-        // Devolve só as linhas "reais" (sem o halo)
         MPI_Send(bloco.ptr(offsetTopo), linhas * largura * canais, MPI_UNSIGNED_CHAR,
                    0, 2, MPI_COMM_WORLD);
 
@@ -368,7 +362,7 @@ void aplicarSobel(Mat& frame, int i)
 
 void aplicarEscalaDeCinza(Mat& frame)
 {
-    #pragma omp parallel for // utilizado apenas for (sem guidance) porque a carga é uniforme entre iterações
+    #pragma omp parallel for
     for (int y = 0; y < frame.rows; y++)
     {
         const uchar* src = frame.ptr<uchar>(y);
@@ -378,13 +372,13 @@ void aplicarEscalaDeCinza(Mat& frame)
         {
             int idx = x * 3; 
 
-            uchar b = src[idx]; // canal azul
-            uchar g = src[idx + 1]; // canal verde
-            uchar r = src[idx + 2]; // canal vermelho
+            uchar b = src[idx];
+            uchar g = src[idx + 1];
+            uchar r = src[idx + 2];
 
-            uchar cinza = (uchar)((114 * b + 587 * g + 299 * r) / 1000); // fórmula de conversão para escala de cinza
+            uchar cinza = (uchar)((114 * b + 587 * g + 299 * r) / 1000);
 
-            dst[idx]     = cinza; 
+            dst[idx]     = cinza;
             dst[idx + 1] = cinza;
             dst[idx + 2] = cinza;
         }
