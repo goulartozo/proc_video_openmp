@@ -12,12 +12,11 @@ void aplicarSharpen(Mat& frame, int intensidade);
 void aplicarEscalaDeCinza(Mat& frame);
 void aplicarEmboss(Mat& frame, int intensidade);
 void aplicarSobel(Mat& frame, int intensidade);
+VideoCapture carregarVideo(const char* nomeArquivo);
 
 bool master(const char* nomeArquivo, int filtro, int intensidade, int size);
 void worker(int rank, int filtro, int intensidade);
 
-// Descarta o restante da linha de stdin. Usado quando scanf falha
-// para evitar loop infinito lendo sempre o mesmo caractere inválido.
 static void limparBufferEntrada()
 {
     int c;
@@ -61,14 +60,11 @@ int main(int argc, char** argv)
     {
         MPI_Barrier(MPI_COMM_WORLD);
 
-        // -1 = "ainda não escolhido / inválido"; 0 = sair; 1..4 = filtro válido.
         int opcao = -1;
         int intensidadeDoEfeito = 5;
 
         if (rank == 0)
         {
-            // Insiste até receber uma opção válida (0-4), sem confundir
-            // "entrada inválida" com "sair" (que é especificamente 0).
             while (opcao == -1)
             {
                 printf("\n===== FILTROS =====\n");
@@ -145,7 +141,7 @@ int main(int argc, char** argv)
 
 bool master(const char* nomeArquivo, int filtro, int intensidade, int size)
 {
-    VideoCapture capture(nomeArquivo);
+    VideoCapture capture = carregarVideo(nomeArquivo);
 
     if (!capture.isOpened())
     {
@@ -406,10 +402,6 @@ void aplicarEmboss(Mat& frame, int i)
 	aplicarConvolucao(frame, kernel);
 }
 
-// Sobel corrigido: Gx e Gy precisam ser calculados a partir da MESMA
-// imagem original e depois combinados pela magnitude do gradiente.
-// A versão anterior aplicava o segundo kernel em cima do resultado
-// do primeiro (cascata), o que não é o algoritmo de Sobel.
 void aplicarSobel(Mat& frame, int i)
 {
 	float kernelGx[3][3] =
@@ -471,42 +463,4 @@ void aplicarEscalaDeCinza(Mat& frame)
             px[idx + 2] = cinza;
         }
     }
-}
-
-void processarVideo(VideoCapture& capture, int filtro, int intensidadeDoEfeito)
-{
-    Mat frame;
-
-    while (capture.read(frame))
-    {
-        switch (filtro)
-        {
-            case 1:
-                aplicarEscalaDeCinza(frame);
-                break;
-
-            case 2:
-                aplicarSharpen(frame, intensidadeDoEfeito);
-                break;
-
-            case 3:
-                aplicarEmboss(frame, intensidadeDoEfeito);
-                break;
-
-            case 4:
-                aplicarSobel(frame, intensidadeDoEfeito);
-                break;
-
-            default:
-				printf("\nOpção inválida! Tente novamente.\n");
-				break;
-        }
-
-        imshow("Video", frame);
-
-        if (waitKey(30) == 27)
-            break;
-    }
-
-    destroyAllWindows();
 }
