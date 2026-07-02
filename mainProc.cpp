@@ -1,20 +1,28 @@
 #include <stdio.h>
+#include <algorithm>
+#include <cmath>
 #include <opencv2/opencv.hpp>
 #include <omp.h>
 #include <mpi.h>
 
 using namespace cv;
 
-VideoCapture carregarVideo(const char* nomeArquivo);
-void processarVideo(VideoCapture& capture, int filtro, int intensidade);
 void aplicarConvolucao(Mat& frame, const float kernel[3][3]);
 void aplicarSharpen(Mat& frame, int intensidade);
 void aplicarEscalaDeCinza(Mat& frame);
 void aplicarEmboss(Mat& frame, int intensidade);
 void aplicarSobel(Mat& frame, int intensidade);
 
-void master(const char* nomeArquivo, int filtro, int intensidade, int size);
+bool master(const char* nomeArquivo, int filtro, int intensidade, int size);
 void worker(int rank, int filtro, int intensidade);
+
+// Descarta o restante da linha de stdin. Usado quando scanf falha
+// para evitar loop infinito lendo sempre o mesmo caractere inválido.
+static void limparBufferEntrada()
+{
+    int c;
+    while ((c = getchar()) != '\n' && c != EOF) {}
+}
 
 int main(int argc, char** argv)
 {
@@ -53,35 +61,54 @@ int main(int argc, char** argv)
     {
         MPI_Barrier(MPI_COMM_WORLD);
 
-        int opcao = 1;
+        // -1 = "ainda não escolhido / inválido"; 0 = sair; 1..4 = filtro válido.
+        int opcao = -1;
         int intensidadeDoEfeito = 5;
 
-        if(rank == 0)
+        if (rank == 0)
         {
-            printf("\n===== FILTROS =====\n");
-            printf("1 - Escala de Cinza\n");
-            printf("2 - Sharpen\n");
-            printf("3 - Emboss\n");
-            printf("4 - Sobel\n");
-            printf("0 - Sair\n");
-            printf("Opcao: ");
-            fflush(stdout);
-
-            scanf("%d", &opcao);
-
-            if (opcao == 0){
-                printf("\nEncerrando o programa...\n");
-            }
-            else if(opcao < 1 || opcao > 4)
+            // Insiste até receber uma opção válida (0-4), sem confundir
+            // "entrada inválida" com "sair" (que é especificamente 0).
+            while (opcao == -1)
             {
-                printf("\nOpção inválida! Tente novamente.\n");
-                opcao = 0;
-            }
-            else if (opcao != 1)
-            {
-                printf("\nQual intensidade? ");
+                printf("\n===== FILTROS =====\n");
+                printf("1 - Escala de Cinza\n");
+                printf("2 - Sharpen\n");
+                printf("3 - Emboss\n");
+                printf("4 - Sobel\n");
+                printf("0 - Sair\n");
+                printf("Opcao: ");
                 fflush(stdout);
-                scanf("%d", &intensidadeDoEfeito);
+
+                if (scanf("%d", &opcao) != 1)
+                {
+                    printf("\nEntrada inválida! Digite um número.\n");
+                    limparBufferEntrada();
+                    opcao = -1;
+                    continue;
+                }
+
+                if (opcao == 0)
+                {
+                    printf("\nEncerrando o programa...\n");
+                }
+                else if (opcao < 1 || opcao > 4)
+                {
+                    printf("\nOpção inválida! Tente novamente.\n");
+                    opcao = -1;
+                }
+                else if (opcao != 1)
+                {
+                    printf("\nQual intensidade? ");
+                    fflush(stdout);
+
+                    if (scanf("%d", &intensidadeDoEfeito) != 1)
+                    {
+                        printf("\nIntensidade inválida, usando padrão (5).\n");
+                        limparBufferEntrada();
+                        intensidadeDoEfeito = 5;
+                    }
+                }
             }
         }
 
@@ -98,7 +125,10 @@ int main(int argc, char** argv)
         if (rank == 0)
         {
             printf("\nProcesso Master iniciando processamento do vídeo...\n");
-            master(argv[1], opcao, intensidadeDoEfeito, size);
+            if (!master(argv[1], opcao, intensidadeDoEfeito, size))
+            {
+                break;
+            }
         }
         else
         {
@@ -113,7 +143,7 @@ int main(int argc, char** argv)
     return 0;
 }
 
-void master(const char* nomeArquivo, int filtro, int intensidade, int size)
+bool master(const char* nomeArquivo, int filtro, int intensidade, int size)
 {
     VideoCapture capture(nomeArquivo);
 
@@ -122,7 +152,7 @@ void master(const char* nomeArquivo, int filtro, int intensidade, int size)
         printf("\nErro ao abrir o vídeo.\n");
         int fimErro[3] = {0, 0, 0};
         MPI_Bcast(fimErro, 3, MPI_INT, 0, MPI_COMM_WORLD);
-        return;
+        return false;
     }
 
     printf("\nVídeo aberto com sucesso.\n");
@@ -131,6 +161,11 @@ void master(const char* nomeArquivo, int filtro, int intensidade, int size)
 
     while (capture.read(frame))
     {
+        if (!frame.isContinuous())
+        {
+            frame = frame.clone();
+        }
+
         int largura = frame.cols;
         int altura = frame.rows;
         int canais = frame.channels();
@@ -162,13 +197,16 @@ void master(const char* nomeArquivo, int filtro, int intensidade, int size)
             int inicioEnvio = primeiraLinha;
             int fimEnvio = ultimaLinha;
 
-            if (inicioEnvio > 0)
-                inicioEnvio--;
+            if (linhas > 0)
+            {
+                if (inicioEnvio > 0)
+                    inicioEnvio--;
 
-            if (fimEnvio < altura - 1)
-                fimEnvio++;
+                if (fimEnvio < altura - 1)
+                    fimEnvio++;
+            }
 
-            int linhasEnviar = fimEnvio - inicioEnvio + 1;
+            int linhasEnviar = (linhas > 0) ? fimEnvio - inicioEnvio + 1 : 0;
 
             int dados[3];
             dados[0] = primeiraLinha;
@@ -177,9 +215,16 @@ void master(const char* nomeArquivo, int filtro, int intensidade, int size)
 
             MPI_Send(dados, 3, MPI_INT, destino, 0, MPI_COMM_WORLD);
 
-            MPI_Send(frame.ptr(inicioEnvio), linhasEnviar * largura * canais, MPI_UNSIGNED_CHAR, destino, 1, MPI_COMM_WORLD);
-
-            printf("Master enviou %d linhas para Worker %d.\n", linhasEnviar, destino);
+            if (linhasEnviar > 0)
+            {
+                MPI_Send(frame.ptr(inicioEnvio), linhasEnviar * largura * canais, MPI_UNSIGNED_CHAR, destino, 1, MPI_COMM_WORLD);
+                printf("Master enviou %d linhas para Worker %d.\n", linhasEnviar, destino);
+            }
+            else
+            {
+                MPI_Send(nullptr, 0, MPI_UNSIGNED_CHAR, destino, 1, MPI_COMM_WORLD);
+                printf("Master enviou 0 linhas para Worker %d (desligado).\n", destino);
+            }
 
             linhaInicial += linhas;
         }
@@ -193,9 +238,16 @@ void master(const char* nomeArquivo, int filtro, int intensidade, int size)
             if (origem <= resto)
                 linhas++;
 
-            MPI_Recv(frame.ptr(linhaInicial), linhas * largura * canais, MPI_UNSIGNED_CHAR, origem, 2, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-
-            printf("Master recebeu %d linhas do Worker %d.\n", linhas, origem);
+            if (linhas > 0)
+            {
+                MPI_Recv(frame.ptr(linhaInicial), linhas * largura * canais, MPI_UNSIGNED_CHAR, origem, 2, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+                printf("Master recebeu %d linhas do Worker %d.\n", linhas, origem);
+            }
+            else
+            {
+                MPI_Recv(nullptr, 0, MPI_UNSIGNED_CHAR, origem, 2, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+                printf("Master recebeu 0 linhas do Worker %d (desligado).\n", origem);
+            }
 
             linhaInicial += linhas;
         }
@@ -215,6 +267,8 @@ void master(const char* nomeArquivo, int filtro, int intensidade, int size)
     capture.release();
 
     destroyAllWindows();
+
+    return true;
 }
 
 void worker(int rank, int filtro, int intensidade)
@@ -241,27 +295,40 @@ void worker(int rank, int filtro, int intensidade)
         int linhas        = dados[1];
         int linhasEnviar  = dados[2];
 
-        Mat bloco(linhasEnviar, largura, CV_8UC3);
-
-        MPI_Recv(bloco.ptr(0), linhasEnviar * largura * canais, MPI_UNSIGNED_CHAR, 0, 1, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-
-        switch (filtro)
+        Mat bloco;
+        if (linhasEnviar > 0)
         {
-            case 1: aplicarEscalaDeCinza(bloco); break;
-            case 2: aplicarSharpen(bloco, intensidade); break;
-            case 3: aplicarEmboss(bloco, intensidade); break;
-            case 4: aplicarSobel(bloco, intensidade); break;
-            default:
-                printf("\nOpção inválida! Tente novamente.\n");
-                break;
+            bloco = Mat(linhasEnviar, largura, CV_8UC(canais));
+            MPI_Recv(bloco.ptr(0), linhasEnviar * largura * canais, MPI_UNSIGNED_CHAR, 0, 1, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        }
+        else
+        {
+            MPI_Recv(nullptr, 0, MPI_UNSIGNED_CHAR, 0, 1, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
         }
 
-        int offsetTopo = (primeiraLinha == 0) ? 0 : 1;
+        if (linhas > 0)
+        {
+            switch (filtro)
+            {
+                case 1: aplicarEscalaDeCinza(bloco); break;
+                case 2: aplicarSharpen(bloco, intensidade); break;
+                case 3: aplicarEmboss(bloco, intensidade); break;
+                case 4: aplicarSobel(bloco, intensidade); break;
+                default:
+                    printf("\nOpção inválida! Tente novamente.\n");
+                    break;
+            }
 
-        MPI_Send(bloco.ptr(offsetTopo), linhas * largura * canais, MPI_UNSIGNED_CHAR,
-                   0, 2, MPI_COMM_WORLD);
-
-        printf("Worker %d processou e enviou %d linhas de volta ao Master.\n", rank, linhas);
+            int offsetTopo = (primeiraLinha == 0) ? 0 : 1;
+            MPI_Send(bloco.ptr(offsetTopo), linhas * largura * canais, MPI_UNSIGNED_CHAR,
+                     0, 2, MPI_COMM_WORLD);
+            printf("Worker %d processou e enviou %d linhas de volta ao Master.\n", rank, linhas);
+        }
+        else
+        {
+            MPI_Send(nullptr, 0, MPI_UNSIGNED_CHAR, 0, 2, MPI_COMM_WORLD);
+            printf("Worker %d recebeu 0 linhas e ficou inativo.\n", rank);
+        }
     }
 }
 
@@ -276,6 +343,7 @@ VideoCapture carregarVideo(const char* nomeArquivo)
 void aplicarConvolucao(Mat& frame, const float kernel[3][3])
 {
     Mat resultado = frame.clone();
+    int canais = frame.channels();
 
     #pragma omp parallel for
     for (int y = 1; y < frame.rows - 1; y++)
@@ -288,23 +356,23 @@ void aplicarConvolucao(Mat& frame, const float kernel[3][3])
 
         for (int x = 1; x < frame.cols - 1; x++)
         {
-            for (int c = 0; c < 3; c++)
+            for (int c = 0; c < canais; c++)
             {
-                int idx = x * 3 + c;
+                int idx = x * canais + c;
 
                 float valor = 0;
 
-                valor += linhaCima[idx - 3]  * kernel[0][0];
-                valor += linhaCima[idx]      * kernel[0][1];
-                valor += linhaCima[idx + 3]  * kernel[0][2];
+                valor += linhaCima[idx - canais]  * kernel[0][0];
+                valor += linhaCima[idx]           * kernel[0][1];
+                valor += linhaCima[idx + canais]  * kernel[0][2];
 
-                valor += linhaMeio[idx - 3]  * kernel[1][0];
-                valor += linhaMeio[idx]      * kernel[1][1];
-                valor += linhaMeio[idx + 3]  * kernel[1][2];
+                valor += linhaMeio[idx - canais]  * kernel[1][0];
+                valor += linhaMeio[idx]           * kernel[1][1];
+                valor += linhaMeio[idx + canais]  * kernel[1][2];
 
-                valor += linhaBaixo[idx - 3] * kernel[2][0];
-                valor += linhaBaixo[idx]     * kernel[2][1];
-                valor += linhaBaixo[idx + 3] * kernel[2][2];
+                valor += linhaBaixo[idx - canais] * kernel[2][0];
+                valor += linhaBaixo[idx]          * kernel[2][1];
+                valor += linhaBaixo[idx + canais] * kernel[2][2];
 
                 dst[idx] = (uchar)std::clamp((int)valor, 0, 255);
             }
@@ -338,48 +406,69 @@ void aplicarEmboss(Mat& frame, int i)
 	aplicarConvolucao(frame, kernel);
 }
 
+// Sobel corrigido: Gx e Gy precisam ser calculados a partir da MESMA
+// imagem original e depois combinados pela magnitude do gradiente.
+// A versão anterior aplicava o segundo kernel em cima do resultado
+// do primeiro (cascata), o que não é o algoritmo de Sobel.
 void aplicarSobel(Mat& frame, int i)
 {
-	float primeiro_kernel[3][3] =
+	float kernelGx[3][3] =
 	{
 		{-1 * (float)i, 0, 1 * (float)i},
 		{-2 * (float)i, 0, 2 * (float)i},
 		{-1 * (float)i, 0, 1 * (float)i}
 	};
-	
-	aplicarConvolucao(frame, primeiro_kernel);
-	
-	float segundo_kernel[3][3] =
+
+	float kernelGy[3][3] =
 	{
 		{1 * (float)i, 2 * (float)i, 1 * (float)i},
 		{0, 0, 0},
 		{-1 * (float)i, -2 * (float)i, -1 * (float)i}
 	};
-	
-	aplicarConvolucao(frame, segundo_kernel);
+
+	Mat gx = frame.clone();
+	Mat gy = frame.clone();
+
+	aplicarConvolucao(gx, kernelGx);
+	aplicarConvolucao(gy, kernelGy);
+
+	int total = frame.rows * frame.cols * frame.channels();
+	uchar* pFrame = frame.ptr<uchar>(0);
+	uchar* pGx = gx.ptr<uchar>(0);
+	uchar* pGy = gy.ptr<uchar>(0);
+
+	#pragma omp parallel for
+	for (int idx = 0; idx < total; idx++)
+	{
+		float vx = (float)pGx[idx];
+		float vy = (float)pGy[idx];
+		float mag = std::sqrt(vx * vx + vy * vy);
+		pFrame[idx] = (uchar)std::clamp((int)mag, 0, 255);
+	}
 }
 
 void aplicarEscalaDeCinza(Mat& frame)
 {
+    int canais = frame.channels();
+
     #pragma omp parallel for
     for (int y = 0; y < frame.rows; y++)
     {
-        const uchar* src = frame.ptr<uchar>(y);
-        uchar* dst = frame.ptr<uchar>(y);
+        uchar* px = frame.ptr<uchar>(y);
 
         for (int x = 0; x < frame.cols; x++)
         {
-            int idx = x * 3; 
+            int idx = x * canais;
 
-            uchar b = src[idx];
-            uchar g = src[idx + 1];
-            uchar r = src[idx + 2];
+            uchar b = px[idx];
+            uchar g = px[idx + 1];
+            uchar r = px[idx + 2];
 
             uchar cinza = (uchar)((114 * b + 587 * g + 299 * r) / 1000);
 
-            dst[idx]     = cinza;
-            dst[idx + 1] = cinza;
-            dst[idx + 2] = cinza;
+            px[idx]     = cinza;
+            px[idx + 1] = cinza;
+            px[idx + 2] = cinza;
         }
     }
 }
