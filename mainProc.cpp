@@ -18,7 +18,6 @@ void worker(int rank, int filtro, int intensidade);
 
 int main(int argc, char** argv)
 {
-
     MPI_Init(&argc, &argv);
 
     int rank;
@@ -35,7 +34,6 @@ int main(int argc, char** argv)
         {
             printf("\nUso: %s <video> Ex: ./mainProc video2.avi\n", argv[0]);
         }
-
         MPI_Finalize();
         return 0;
     }
@@ -47,65 +45,66 @@ int main(int argc, char** argv)
             printf("\n Execute com pelo menos 2 processos.\n");
             printf("Ex: mpirun -np 4 ./mainProc video2.avi\n");
         }
-
         MPI_Finalize();
         return 0;
     }
 
-    MPI_Barrier(MPI_COMM_WORLD);
-
-    int opcao = 1;
-    int intensidadeDoEfeito = 5;
-
-    if(rank == 0)
+    while (true)
     {
-        printf("\n===== FILTROS =====\n");
-        printf("1 - Escala de Cinza\n");
-        printf("2 - Sharpen\n");
-        printf("3 - Emboss\n");
-        printf("4 - Sobel\n");
-        printf("0 - Sair\n");
-        printf("Opcao: ");
-        fflush(stdout);
+        MPI_Barrier(MPI_COMM_WORLD);
 
-        scanf("%d", &opcao);
+        int opcao = 1;
+        int intensidadeDoEfeito = 5;
 
-        if (opcao == 0){
-            printf("\nEncerrando o programa...\n");
-        }
-        else if(opcao < 1 || opcao > 4)
-		{
-			printf("\nOpção inválida! Tente novamente.\n");
-			opcao = 0;
-		}
-        else if (opcao != 1)
+        if(rank == 0)
         {
-            printf("\nQual intensidade? ");
+            printf("\n===== FILTROS =====\n");
+            printf("1 - Escala de Cinza\n");
+            printf("2 - Sharpen\n");
+            printf("3 - Emboss\n");
+            printf("4 - Sobel\n");
+            printf("0 - Sair\n");
+            printf("Opcao: ");
             fflush(stdout);
-            scanf("%d", &intensidadeDoEfeito);
+
+            scanf("%d", &opcao);
+
+            if (opcao == 0){
+                printf("\nEncerrando o programa...\n");
+            }
+            else if(opcao < 1 || opcao > 4)
+            {
+                printf("\nOpção inválida! Tente novamente.\n");
+                opcao = 0;
+            }
+            else if (opcao != 1)
+            {
+                printf("\nQual intensidade? ");
+                fflush(stdout);
+                scanf("%d", &intensidadeDoEfeito);
+            }
         }
-    }
 
-    MPI_Bcast(&opcao, 1, MPI_INT, 0, MPI_COMM_WORLD);
-    MPI_Bcast(&intensidadeDoEfeito, 1, MPI_INT, 0, MPI_COMM_WORLD);
+        MPI_Bcast(&opcao, 1, MPI_INT, 0, MPI_COMM_WORLD);
+        MPI_Bcast(&intensidadeDoEfeito, 1, MPI_INT, 0, MPI_COMM_WORLD);
 
-    if (opcao == 0)
-    {
-        MPI_Finalize();
-        return 0;
-    }
+        if (opcao == 0)
+        {
+            break;
+        }
 
-    printf("\nProcesso %d recebeu configuração -> Filtro: %d | Intensidade: %d\n", rank, opcao, intensidadeDoEfeito);
+        printf("\nProcesso %d recebeu configuração -> Filtro: %d | Intensidade: %d\n", rank, opcao, intensidadeDoEfeito);
 
-    if (rank == 0)
-    {
-        printf("\nProcesso Master iniciando processamento do vídeo...\n");
-        master(argv[1], opcao, intensidadeDoEfeito, size);
-    }
-    else
-    {
-        printf("Processo Worker %d aguardando blocos de imagem...\n", rank);
-        worker(rank, opcao, intensidadeDoEfeito);
+        if (rank == 0)
+        {
+            printf("\nProcesso Master iniciando processamento do vídeo...\n");
+            master(argv[1], opcao, intensidadeDoEfeito, size);
+        }
+        else
+        {
+            printf("Processo Worker %d aguardando blocos de imagem...\n", rank);
+            worker(rank, opcao, intensidadeDoEfeito);
+        }
     }
 
     printf("Processo %d finalizado.\n", rank);
